@@ -1,0 +1,80 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    --background: 0 0% 100%;
+    --foreground: 222.2 84% 4.9%;
+    /* ... other variables */
+  }
+}
+
+/* The @keyframes change-img-anim and .hero-image classes 
+  have been removed as this animation is now handled by 
+  React state and Tailwind CSS in the HeroSection.tsx component.
+*/
+
+
+/* --- Animated Rainbow Gradient Border with Masking --- */
+@property --angle {
+  syntax: '<angle>';
+  initial-value: 0deg;
+  inherits: false;
+}
+
+@keyframes spin {
+  to {
+    --angle: 360deg;
+  }
+}
+
+.animated-gradient-border {
+	position: relative;	
+    border-radius: 1rem; /* Corresponds to rounded-2xl */
+}
+
+.animated-gradient-border::before {
+	content: '';
+	position: absolute;
+	inset: 0; /* Cover the entire area */
+	border-radius: inherit;
+	padding: 2px; /* This padding becomes the border thickness */
+	background: 
+		conic-gradient(
+			from var(--angle),
+			red, yellow, lime, aqua, blue, magenta, red
+		);
+	animation: spin 3s linear infinite;
+    -webkit-mask: 
+        linear-gradient(#fff 0 0) content-box, 
+        linear-gradient(#fff 0 0);
+    -webkit-mask-composite: xor;
+            mask-composite: exclude; 
+}
+
+/* Class for the pill-shaped input */
+.animated-gradient-border-input {
+	position: relative;	
+    border-radius: 9999px; /* Corresponds to rounded-full */
+}
+
+.animated-gradient-border-input::before {
+	content: '';
+	position: absolute;
+	inset: 0;
+	border-radius: inherit;
+	padding: 2px;
+	background: 
+		conic-gradient(
+			from var(--angle),
+			red, yellow, lime, aqua, blue, magenta, red
+		);
+	animation: spin 3s linear infinite;
+    -webkit-mask: 
+        linear-gradient(#fff 0 0) content-box, 
+        linear-gradient(#fff 0 0);
+    -webkit-mask-composite: xor;
+            mask-composite: exclude; 
+}
+

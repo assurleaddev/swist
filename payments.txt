@@ -1,0 +1,11 @@
+country_code,account_type,primary_email_alias,password,first_name,last_name,ppBalance,addBank,ccType,payment_card
+US,BUSINESS,test-business@account.com,R1ckN0v4k,Rick,Novak,1001,Y,VISA,PAYPAL   
+GB,PERSONAL,test-personal@account.com,S4r4C0nn0!,Sara,Connor,1002,N,MASTERCARD,DISCOVER
+===========================paypal================================
+4032038457132490
+03/2029
+961
+===========================stripe================================
+4242424242424242
+12/34
+123

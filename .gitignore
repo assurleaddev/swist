@@ -1,0 +1,21 @@
+# .gitignore
+
+node_modules
+
+# Node (Next.js)
+frontend/node_modules
+frontend/.next
+frontend/.env
+
+# Python (FastAPI)
+backend/__pycache__/
+backend/.venv/
+backend/env/
+backend/.env
+
+# OS and IDE files
+.DS_Store
+*.pyc
+*.log
+.vscode/
+.idea/
