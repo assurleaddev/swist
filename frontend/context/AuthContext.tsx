@@ -4,9 +4,17 @@
 import { createContext, useContext, useState, useEffect, ReactNode } from 'react';
 import { useRouter } from 'next/navigation';
 import { jwtDecode } from 'jwt-decode';
+import axios from 'axios';
 
+// Expanded User interface to hold profile data
 interface User {
+    id: number;
     email: string;
+    first_name: string | null;
+    last_name: string | null;
+    bio: string | null;
+    profile_picture_url: string | null;
+    is_two_factor_enabled: boolean;
 }
 
 interface AuthContextType {
@@ -15,9 +23,24 @@ interface AuthContextType {
     login: (token: string) => void;
     logout: () => void;
     isLoading: boolean;
+    fetchUserProfile: () => void; // Function to refresh user data
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
+
+// Create an Axios instance for authenticated requests
+const api = axios.create({
+    baseURL: 'http://127.0.0.1:8000/api',
+});
+
+api.interceptors.request.use((config) => {
+    const token = localStorage.getItem('authToken');
+    if (token) {
+        config.headers.Authorization = `Bearer ${token}`;
+    }
+    return config;
+});
+
 
 export const AuthProvider = ({ children }: { children: ReactNode }) => {
     const [user, setUser] = useState<User | null>(null);
@@ -25,21 +48,26 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
     const [isLoading, setIsLoading] = useState(true);
     const router = useRouter();
 
+    const fetchUserProfile = async () => {
+        try {
+            const response = await api.get('/users/me');
+            setUser(response.data);
+        } catch (error) {
+            console.error("Failed to fetch user profile", error);
+            logout(); // If we can't get the profile, log the user out
+        }
+    };
+
     useEffect(() => {
         const storedToken = localStorage.getItem('authToken');
         if (storedToken) {
             try {
                 const decoded: any = jwtDecode(storedToken);
-                // Debug: log decoded token
-                console.log("Decoded token:", decoded);
-                if (!decoded.sub) {
-                    throw new Error("Token missing 'sub' field");
-                }
                 if (decoded.exp && Date.now() >= decoded.exp * 1000) {
                     logout();
                 } else {
-                    setUser({ email: decoded.sub });
                     setToken(storedToken);
+                    fetchUserProfile();
                 }
             } catch (error) {
                 console.error("Invalid token:", error);
@@ -50,15 +78,11 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
     }, []);
 
     const login = (newToken: string) => {
-        try {
-            const decoded: { sub: string } = jwtDecode(newToken);
-            localStorage.setItem('authToken', newToken);
-            setUser({ email: decoded.sub });
-            setToken(newToken);
+        localStorage.setItem('authToken', newToken);
+        setToken(newToken);
+        fetchUserProfile().then(() => {
             router.push('/');
-        } catch (error) {
-            console.error("Failed to decode token on login:", error);
-        }
+        });
     };
 
     const logout = () => {
@@ -69,7 +93,7 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
     };
 
     return (
-        <AuthContext.Provider value={{ user, token, login, logout, isLoading }}>
+        <AuthContext.Provider value={{ user, token, login, logout, isLoading, fetchUserProfile }}>
             {children}
         </AuthContext.Provider>
     );
@@ -83,3 +107,5 @@ export const useAuth = () => {
     return context;
 };
 
+// Export the api instance to be used in other components
+export { api };
