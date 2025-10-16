@@ -10,3 +10,8 @@ pymysql
 passlib[bcrypt]
 python-jose[cryptography]
 pydantic[email]
+alembic
+fastapi-mail
+python-multipart
+pyotp
+qrcode[pil]
