@@ -4,7 +4,7 @@ import { Inter } from "next/font/google";
 import "./globals.css";
 import { cn } from "@/lib/utils";
 import { AuthProvider } from "@/context/AuthContext"; // Import the AuthProvider
-
+import "mapbox-gl/dist/mapbox-gl.css";
 const inter = Inter({ subsets: ["latin"], variable: "--font-sans" });
 
 export const metadata: Metadata = {
@@ -19,6 +19,10 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="en">
+      <head>
+        {/* Mapbox GL JS */}
+        <link href='https://api.mapbox.com/mapbox-gl-js/v2.9.1/mapbox-gl.css' rel='stylesheet' />
+      </head>
       <body
         className={cn(
           "min-h-screen bg-gray-100 font-sans antialiased",

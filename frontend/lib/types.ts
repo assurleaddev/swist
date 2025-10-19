@@ -4,10 +4,12 @@
 export interface Message {
   id: number;
   sender: 'user' | 'ai';
-  content: string; 
+  content: string;
   itinerary?: ItineraryDay[];
-  customizationRequest?: CustomizationFeedback; 
-  bookingSummaryItinerary?: ItineraryDay[]; 
+  customizationRequest?: CustomizationFeedback;
+  bookingSummaryItinerary?: ItineraryDay[];
+  // New property to trigger the map modal
+  rideBookingPayload?: RideBookingPayload;
 }
 
 // Corresponds to the Activity model in the backend
@@ -51,5 +53,19 @@ export interface PromptDetails {
 export interface MoodResponse {
     mood: string;
     color: string;
+}
+
+// --- New Types for Ride Booking ---
+
+// Represents a location with coordinates and name
+export interface Location {
+  name: string;
+  coordinates: [number, number]; // [longitude, latitude]
+}
+
+// The payload sent from the backend to trigger the ride booking UI
+export interface RideBookingPayload {
+  pickup: Location;
+  destination: Location;
 }
 

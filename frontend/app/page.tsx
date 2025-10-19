@@ -13,8 +13,9 @@ import VehicleBooking from '@/components/VehicleBooking';
 import Header from '@/components/Header';
 import HeroSection from '@/components/HeroSection';
 import FeaturedJourney from '@/components/FeaturedJourney';
-import TailoredExperiences from '@/components/TailoredExperiences'; // Import the new component
-import { ItineraryDay, SavedTrip, CustomizationFeedback, Message, PromptDetails } from '@/lib/types';
+import TailoredExperiences from '@/components/TailoredExperiences';
+import RideBookingMap from '@/components/RideBookingMap'; // Import the new map component
+import { ItineraryDay, SavedTrip, CustomizationFeedback, Message, PromptDetails, RideBookingPayload } from '@/lib/types';
 import { Utensils, Zap, Hotel, Calendar } from 'lucide-react';
 import { Avatar, AvatarFallback } from '@/components/ui/avatar';
 
@@ -35,6 +36,10 @@ export default function Home() {
   const [currentItineraryToCustomize, setCurrentItineraryToCustomize] = useState<ItineraryDay[]>([]);
   const [isReadOnlyModal, setIsReadOnlyModal] = useState(false);
   const [currentFeedbackToView, setCurrentFeedbackToView] = useState<CustomizationFeedback | null>(null);
+  
+  // State for the ride booking modal
+  const [isRideBookingModalOpen, setIsRideBookingModalOpen] = useState(false);
+  const [rideBookingPayload, setRideBookingPayload] = useState<RideBookingPayload | null>(null);
 
   useEffect(() => {
     startNewSession();
@@ -69,51 +74,71 @@ export default function Home() {
         AWAITING_IMPROVEMENTS: () => {}
     };
     stageActions[conversationStage]?.();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [conversationStage]);
 
   const handleNewPrompt = async (prompt: string) => {
     handleNewMessage({ id: Date.now(), sender: 'user', content: prompt });
     
-    switch (conversationStage) {
-        case 'AWAITING_INITIAL_PROMPT':
-            setPromptDetails({ mainQuery: prompt }); setConversationStage('AWAITING_TRAVELERS'); break;
-        case 'AWAITING_TRAVELERS':
-            setPromptDetails(prev => ({ ...prev, travelers: parseInt(prompt, 10) || 1 })); setConversationStage('AWAITING_DATE'); break;
-        case 'AWAITING_DATE':
-            setPromptDetails(prev => ({ ...prev, date: prompt })); setConversationStage('AWAITING_FLIGHTS'); break;
-        case 'AWAITING_FLIGHTS':
-            const finalDetails = { ...promptDetails, flights: prompt.toLowerCase().includes('yes') } as PromptDetails;
-            setPromptDetails(finalDetails); setConversationStage('GENERATING_ITINERARY'); generateItinerary(finalDetails, null); break;
-        case 'AWAITING_IMPROVEMENTS':
-            const positiveConfirmation = ['yes', 'perfect', 'looks good', 'no more changes', 'proceed', 'checkout', 'finalize', 'confirm'].some(term => prompt.toLowerCase().includes(term));
-            if (positiveConfirmation) {
-                setConversationStage('PLAN_CONFIRMED');
-            } else {
-                const lastItinerary = [...messages].reverse().find(m => m.itinerary)?.itinerary;
-                if (lastItinerary) {
-                    setConversationStage('GENERATING_ITINERARY');
-                    generateItinerary(promptDetails as PromptDetails, lastItinerary, prompt);
+    // For simplicity in this integration, we'll bypass the conversational stages if it looks like a ride request
+    const isRideRequest = /book a ride|get a taxi|take me from|go to.*from/.test(prompt.toLowerCase());
+
+    if (isRideRequest) {
+        generateItinerary( { mainQuery: prompt, travelers: 1, date: 'today', flights: false }, null, prompt);
+    } else {
+         switch (conversationStage) {
+            case 'AWAITING_INITIAL_PROMPT':
+                setPromptDetails({ mainQuery: prompt }); setConversationStage('AWAITING_TRAVELERS'); break;
+            case 'AWAITING_TRAVELERS':
+                setPromptDetails(prev => ({ ...prev, travelers: parseInt(prompt, 10) || 1 })); setConversationStage('AWAITING_DATE'); break;
+            case 'AWAITING_DATE':
+                setPromptDetails(prev => ({ ...prev, date: prompt })); setConversationStage('AWAITING_FLIGHTS'); break;
+            case 'AWAITING_FLIGHTS':
+                const finalDetails = { ...promptDetails, flights: prompt.toLowerCase().includes('yes') } as PromptDetails;
+                setPromptDetails(finalDetails); setConversationStage('GENERATING_ITINERARY'); generateItinerary(finalDetails, null); break;
+            case 'AWAITING_IMPROVEMENTS':
+                const positiveConfirmation = ['yes', 'perfect', 'looks good', 'no more changes', 'proceed', 'checkout', 'finalize', 'confirm'].some(term => prompt.toLowerCase().includes(term));
+                if (positiveConfirmation) {
+                    setConversationStage('PLAN_CONFIRMED');
                 } else {
-                    handleNewMessage({id: Date.now() + 1, sender: 'ai', content: "I seem to have lost the context. Let's start a new plan."});
-                    startNewSession();
+                    const lastItinerary = [...messages].reverse().find(m => m.itinerary)?.itinerary;
+                    if (lastItinerary) {
+                        setConversationStage('GENERATING_ITINERARY');
+                        generateItinerary(promptDetails as PromptDetails, lastItinerary, prompt);
+                    } else {
+                        handleNewMessage({id: Date.now() + 1, sender: 'ai', content: "I seem to have lost the context. Let's start a new plan."});
+                        startNewSession();
+                    }
                 }
-            }
-            break;
+                break;
+        }
     }
   };
 
-  const generateItinerary = async (details: PromptDetails, previousItinerary: ItineraryDay[] | null, feedback?: string) => {
+  const generateItinerary = async (details: Partial<PromptDetails>, previousItinerary: ItineraryDay[] | null, feedback?: string) => {
     setIsLoading(true);
     let fullPrompt = `Plan a trip based on the following details:\n- Main Request: ${details.mainQuery}\n- Number of Travelers: ${details.travelers}\n- Departure Date: ${details.date}\n- Flights Booked: ${details.flights ? 'Yes' : 'No'}`;
     if (previousItinerary && feedback) {
         fullPrompt = `Please improve the following travel itinerary based on my feedback.\n\nOriginal Request Details:\n- Main Request: ${details.mainQuery}\n- Travelers: ${details.travelers}\n- Date: ${details.date}\n\nPrevious Itinerary:\n${JSON.stringify(previousItinerary, null, 2)}\n\nMy Feedback for Improvement:\n"${feedback}"\n\nGenerate a new, improved itinerary based on all this information.`
+    } else if (feedback) { // This handles direct ride requests
+        fullPrompt = feedback;
     }
+    
     try {
       const neuralResponse = await axios.post('http://127.0.0.1:8000/api/agents/neural', { prompt: fullPrompt });
-      if (neuralResponse.data && neuralResponse.data.itinerary_draft) {
+      
+      // Check if the response is a tool call for booking a ride
+      if (neuralResponse.data && neuralResponse.data.tool_name === 'book_ride') {
+          setRideBookingPayload(neuralResponse.data.tool_params);
+          setIsRideBookingModalOpen(true);
+          handleNewMessage({ id: Date.now() + 2, sender: 'ai', content: "Of course, I can book that ride for you. Please confirm the details on the map." });
+
+      } else if (neuralResponse.data && neuralResponse.data.itinerary_draft) {
         handleNewMessage({ id: Date.now() + 2, sender: 'ai', content: "", itinerary: neuralResponse.data.itinerary_draft });
         handleNewMessage({ id: Date.now() + 3, sender: 'ai', content: "How does this look? Are there any further adjustments you'd like, or shall we finalize this plan?" });
         setConversationStage('AWAITING_IMPROVEMENTS');
+      } else {
+          throw new Error("Invalid response structure from neural agent.");
       }
     } catch (error) {
       console.error("Error fetching AI responses:", error);
@@ -185,6 +210,15 @@ export default function Home() {
         <Footer />
         <CustomizeModal isOpen={isCustomizeModalOpen} onClose={() => setIsCustomizeModalOpen(false)} itinerary={currentItineraryToCustomize} onSave={handleSaveCustomization} readOnlyFeedback={currentFeedbackToView} />
   
+        {isRideBookingModalOpen && rideBookingPayload && (
+          <RideBookingMap
+            payload={{
+              pickup: { ...rideBookingPayload.pickup, label: "Pickup" },
+              destination: { ...rideBookingPayload.destination, label: "Destination" },
+            }}
+            onClose={() => setIsRideBookingModalOpen(false)}
+          />
+        )}
     </div>
   );
 }

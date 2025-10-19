@@ -1,6 +1,6 @@
 # File: backend/schemas/agent.py
 from pydantic import BaseModel, Field
-from typing import List, Optional
+from typing import List, Optional, Union
 
 # --- Main Itinerary Schemas ---
 
@@ -18,6 +18,19 @@ class ItineraryDay(BaseModel):
 class ItineraryDraft(BaseModel):
     itinerary: List[ItineraryDay] = Field(..., alias="itinerary_draft")
 
+# --- New Models for Tool Calling ---
+class Location(BaseModel):
+    name: str
+    coordinates: List[float]
+
+class RideBookingPayload(BaseModel):
+    pickup: Location
+    destination: Location
+
+class ToolCallResponse(BaseModel):
+    tool_name: str
+    tool_params: RideBookingPayload
+
 # --- Conversational Schemas ---
 
 class Message(BaseModel):
@@ -30,12 +43,13 @@ class ConversationalRequest(BaseModel):
 # --- General Agent Schemas ---
 
 class AgentRequest(BaseModel):
-    prompt: str
+    prompt: Optional[str] = None
+    messages: Optional[List[Message]] = None
 
 class AgentResponse(BaseModel):
     content: str = Field(..., alias="response")
 
-# --- Emotional Agent Schema (This was missing) ---
+# --- Emotional Agent Schema ---
 class MoodResponse(BaseModel):
     mood: str
     color: str = Field(..., alias="color_suggestion")
