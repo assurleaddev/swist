@@ -14,12 +14,12 @@ import Header from '@/components/Header';
 import HeroSection from '@/components/HeroSection';
 import FeaturedJourney from '@/components/FeaturedJourney';
 import TailoredExperiences from '@/components/TailoredExperiences';
-import RideBookingMap from '@/components/RideBookingMap'; // Import the new map component
+import RideBookingMap from '@/components/RideBookingMap';
 import { ItineraryDay, SavedTrip, CustomizationFeedback, Message, PromptDetails, RideBookingPayload } from '@/lib/types';
 import { Utensils, Zap, Hotel, Calendar } from 'lucide-react';
 import { Avatar, AvatarFallback } from '@/components/ui/avatar';
 
-type ConversationStage = 
+type ConversationStage =
   | 'AWAITING_INITIAL_PROMPT' | 'AWAITING_TRAVELERS' | 'AWAITING_DATE'
   | 'AWAITING_FLIGHTS' | 'GENERATING_ITINERARY' | 'AWAITING_IMPROVEMENTS' | 'PLAN_CONFIRMED';
 
@@ -36,7 +36,7 @@ export default function Home() {
   const [currentItineraryToCustomize, setCurrentItineraryToCustomize] = useState<ItineraryDay[]>([]);
   const [isReadOnlyModal, setIsReadOnlyModal] = useState(false);
   const [currentFeedbackToView, setCurrentFeedbackToView] = useState<CustomizationFeedback | null>(null);
-  
+
   // State for the ride booking modal
   const [isRideBookingModalOpen, setIsRideBookingModalOpen] = useState(false);
   const [rideBookingPayload, setRideBookingPayload] = useState<RideBookingPayload | null>(null);
@@ -56,7 +56,7 @@ export default function Home() {
   const handleNewMessage = (newMessage: Message) => {
     setMessages(prev => [...prev, newMessage]);
   };
-  
+
   useEffect(() => {
     const stageActions: Record<ConversationStage, () => void> = {
         AWAITING_TRAVELERS: () => handleNewMessage({ id: Date.now(), sender: 'ai', content: 'That sounds wonderful! To help me plan the perfect trip, could you tell me how many people will be traveling?' }),
@@ -79,73 +79,70 @@ export default function Home() {
 
   const handleNewPrompt = async (prompt: string) => {
     handleNewMessage({ id: Date.now(), sender: 'user', content: prompt });
-    
-    // For simplicity in this integration, we'll bypass the conversational stages if it looks like a ride request
-    const isRideRequest = /book a ride|get a taxi|take me from|go to.*from/.test(prompt.toLowerCase());
-
-    if (isRideRequest) {
-        generateItinerary( { mainQuery: prompt, travelers: 1, date: 'today', flights: false }, null, prompt);
-    } else {
-         switch (conversationStage) {
-            case 'AWAITING_INITIAL_PROMPT':
-                setPromptDetails({ mainQuery: prompt }); setConversationStage('AWAITING_TRAVELERS'); break;
-            case 'AWAITING_TRAVELERS':
-                setPromptDetails(prev => ({ ...prev, travelers: parseInt(prompt, 10) || 1 })); setConversationStage('AWAITING_DATE'); break;
-            case 'AWAITING_DATE':
-                setPromptDetails(prev => ({ ...prev, date: prompt })); setConversationStage('AWAITING_FLIGHTS'); break;
-            case 'AWAITING_FLIGHTS':
-                const finalDetails = { ...promptDetails, flights: prompt.toLowerCase().includes('yes') } as PromptDetails;
-                setPromptDetails(finalDetails); setConversationStage('GENERATING_ITINERARY'); generateItinerary(finalDetails, null); break;
-            case 'AWAITING_IMPROVEMENTS':
-                const positiveConfirmation = ['yes', 'perfect', 'looks good', 'no more changes', 'proceed', 'checkout', 'finalize', 'confirm'].some(term => prompt.toLowerCase().includes(term));
-                if (positiveConfirmation) {
-                    setConversationStage('PLAN_CONFIRMED');
-                } else {
-                    const lastItinerary = [...messages].reverse().find(m => m.itinerary)?.itinerary;
-                    if (lastItinerary) {
-                        setConversationStage('GENERATING_ITINERARY');
-                        generateItinerary(promptDetails as PromptDetails, lastItinerary, prompt);
-                    } else {
-                        handleNewMessage({id: Date.now() + 1, sender: 'ai', content: "I seem to have lost the context. Let's start a new plan."});
-                        startNewSession();
-                    }
-                }
-                break;
-        }
-    }
+    // Centralize all logic into generateItinerary
+    await generateItinerary({ mainQuery: prompt });
   };
 
-  const generateItinerary = async (details: Partial<PromptDetails>, previousItinerary: ItineraryDay[] | null, feedback?: string) => {
+  const generateItinerary = async (details: Partial<PromptDetails & { currentLocation?: { latitude: number, longitude: number } }>, previousItinerary?: ItineraryDay[] | null, feedback?: string) => {
     setIsLoading(true);
-    let fullPrompt = `Plan a trip based on the following details:\n- Main Request: ${details.mainQuery}\n- Number of Travelers: ${details.travelers}\n- Departure Date: ${details.date}\n- Flights Booked: ${details.flights ? 'Yes' : 'No'}`;
-    if (previousItinerary && feedback) {
-        fullPrompt = `Please improve the following travel itinerary based on my feedback.\n\nOriginal Request Details:\n- Main Request: ${details.mainQuery}\n- Travelers: ${details.travelers}\n- Date: ${details.date}\n\nPrevious Itinerary:\n${JSON.stringify(previousItinerary, null, 2)}\n\nMy Feedback for Improvement:\n"${feedback}"\n\nGenerate a new, improved itinerary based on all this information.`
-    } else if (feedback) { // This handles direct ride requests
-        fullPrompt = feedback;
-    }
+
+    const fullPrompt = feedback || details.mainQuery || '';
     
     try {
-      const neuralResponse = await axios.post('http://127.0.0.1:8000/api/agents/neural', { prompt: fullPrompt });
+      const payload: any = { prompt: fullPrompt };
+      if (details.currentLocation) {
+          payload.current_location = [details.currentLocation.longitude, details.currentLocation.latitude];
+      }
       
-      // Check if the response is a tool call for booking a ride
-      if (neuralResponse.data && neuralResponse.data.tool_name === 'book_ride') {
-          setRideBookingPayload(neuralResponse.data.tool_params);
+      const neuralResponse = await axios.post('http://127.0.0.1:8000/api/agents/neural', payload);
+      const { data } = neuralResponse;
+
+      if (data.action_required === 'get_location') {
+        handleNewMessage({ id: Date.now() + 1, sender: 'ai', content: data.message });
+        if (navigator.geolocation) {
+            navigator.geolocation.getCurrentPosition(
+                (position) => {
+                    const { latitude, longitude } = position.coords;
+                    // Resend the request with location data
+                    generateItinerary({ ...details, currentLocation: { latitude, longitude } });
+                },
+                (error) => {
+                    let errorMessage = "I couldn't get your location. ";
+                    if (error.code === error.PERMISSION_DENIED) {
+                        errorMessage += "To use this feature, please enable location permissions for this site in your browser settings and try again.";
+                    } else {
+                        errorMessage += "Please provide a specific pickup address instead.";
+                    }
+                    handleNewMessage({ id: Date.now() + 2, sender: 'ai', content: errorMessage });
+                    setIsLoading(false);
+                }
+            );
+        } else {
+            handleNewMessage({ id: Date.now() + 2, sender: 'ai', content: "Geolocation is not supported by your browser." });
+            setIsLoading(false);
+        }
+      } else if (data.tool_name === 'book_ride') {
+          setRideBookingPayload(data.tool_params);
           setIsRideBookingModalOpen(true);
           handleNewMessage({ id: Date.now() + 2, sender: 'ai', content: "Of course, I can book that ride for you. Please confirm the details on the map." });
-
-      } else if (neuralResponse.data && neuralResponse.data.itinerary_draft) {
-        handleNewMessage({ id: Date.now() + 2, sender: 'ai', content: "", itinerary: neuralResponse.data.itinerary_draft });
+          setIsLoading(false);
+      } else if (data.itinerary_draft) {
+        handleNewMessage({ id: Date.now() + 2, sender: 'ai', content: "", itinerary: data.itinerary_draft });
         handleNewMessage({ id: Date.now() + 3, sender: 'ai', content: "How does this look? Are there any further adjustments you'd like, or shall we finalize this plan?" });
         setConversationStage('AWAITING_IMPROVEMENTS');
+        setIsLoading(false);
       } else {
-          throw new Error("Invalid response structure from neural agent.");
+          throw new Error("Invalid response from server.");
       }
     } catch (error) {
-      console.error("Error fetching AI responses:", error);
-      handleNewMessage({ id: Date.now() + 1, sender: 'ai', content: "I'm sorry, I encountered an error. Please try again." });
-      setConversationStage('AWAITING_INITIAL_PROMPT');
-    } finally {
-      setIsLoading(false);
+        console.error("Error fetching AI responses:", error);
+        let errorMessage = "I'm sorry, I encountered an error. Please try again.";
+        if (axios.isAxiosError(error) && error.response?.data?.detail) {
+            errorMessage = error.response.data.detail;
+        }
+        handleNewMessage({ id: Date.now() + 1, sender: 'ai', content: errorMessage });
+        setConversationStage('AWAITING_INITIAL_PROMPT');
+        setIsLoading(false);
     }
   };
 
@@ -157,12 +154,15 @@ export default function Home() {
     const newSavedTrip: SavedTrip = { id: tripId, name: tripId, dates: `5 Days • Est. Dec 18-22`, itinerary: itineraryToSave };
     setSavedTrips(prev => [...prev, newSavedTrip]);
   };
+
   const handleOpenCustomizeModal = (itinerary: ItineraryDay[]) => {
     setCurrentItineraryToCustomize(itinerary); setIsReadOnlyModal(false); setCurrentFeedbackToView(null); setIsCustomizeModalOpen(true);
   };
+
   const handleViewCustomization = (feedback: CustomizationFeedback) => {
     setCurrentFeedbackToView(feedback); const relatedItinerary = messages.find(m => m.itinerary)?.itinerary || []; setCurrentItineraryToCustomize(relatedItinerary); setIsReadOnlyModal(true); setIsCustomizeModalOpen(true);
   };
+
   const handleSaveCustomization = (feedback: CustomizationFeedback) => {
     const feedbackPrompt = `My overall feedback is: "${feedback.generalFeedback}". For specific days: ${feedback.dailyFeedback.filter(d => d.feedback.trim() !== '').map(d => `For Day ${d.day}, I'd like to change it to: "${d.feedback}"`).join('. ')}.`;
     handleNewMessage({ id: Date.now(), sender: 'user', content: `I've requested some changes to the previous itinerary.`, customizationRequest: feedback });
@@ -222,4 +222,3 @@ export default function Home() {
     </div>
   );
 }
-

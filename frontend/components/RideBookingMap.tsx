@@ -16,10 +16,22 @@ type Props = {
   onClose: () => void;
 };
 
+const fetchRoute = async (start: [number, number], end: [number, number]) => {
+    const token = process.env.NEXT_PUBLIC_MAPBOX_TOKEN;
+    const url = `https://api.mapbox.com/directions/v5/mapbox/driving/${start.join(
+      ","
+    )};${end.join(",")}?geometries=geojson&access_token=${token}`;
+    const res = await fetch(url);
+    const data = await res.json();
+    return data.routes[0].geometry.coordinates as [number, number][];
+};
+
 export default function RideBookingMap({ payload, onClose }: Props) {
   const mapContainer = useRef<HTMLDivElement>(null);
   const map = useRef<Map | null>(null);
   const carMarker = useRef<mapboxgl.Marker | null>(null);
+  const userMarker = useRef<mapboxgl.Marker | null>(null);
+  const watchId = useRef<number | null>(null);
   const animationFrame = useRef<number | null>(null);
 
   const [state, setState] = useState<
@@ -28,11 +40,110 @@ export default function RideBookingMap({ payload, onClose }: Props) {
 
   const [clientReady, setClientReady] = useState(false);
   const [driverReady, setDriverReady] = useState(false);
-  const [eta, setEta] = useState("");
 
   const { pickup, destination } = payload;
 
-  // === INIT MAPBOX ===
+  const drawRoute = useCallback((
+    id: string,
+    coords: [number, number][],
+    color = "#3B82F6",
+    dash: number[] = []
+  ) => {
+    if (!map.current) return;
+    const source = map.current.getSource(id);
+    // If the source already exists, just update the data. Otherwise, create it.
+    if (source) {
+        (source as mapboxgl.GeoJSONSource).setData({
+            type: "Feature",
+            properties: {},
+            geometry: { type: "LineString", coordinates: coords },
+        });
+    } else {
+        map.current.addSource(id, {
+          type: "geojson",
+          data: {
+            type: "Feature",
+            properties: {},
+            geometry: { type: "LineString", coordinates: coords },
+          },
+        });
+        
+        const paint: mapboxgl.LinePaint = {
+            "line-color": color,
+            "line-width": 4,
+        };
+
+        if (dash.length > 0) {
+            paint["line-dasharray"] = dash;
+        }
+
+        map.current.addLayer({
+          id,
+          type: "line",
+          source: id,
+          layout: { "line-cap": "round", "line-join": "round" },
+          paint: paint,
+        });
+    }
+  }, []);
+
+  const animateCar = useCallback((
+    routeId: string,
+    route: [number, number][],
+    durationSeconds: number,
+    onFinish?: () => void,
+    routeOptions?: { color?: string; dash?: number[] }
+  ) => {
+    if (!carMarker.current) return;
+    const startTime = performance.now();
+    const duration = durationSeconds * 1000;
+
+    const animate = (now: number) => {
+      const progress = Math.min((now - startTime) / duration, 1);
+      const index = Math.floor(progress * (route.length - 1));
+      const point = route[index];
+      
+      if (point) {
+        carMarker.current!.setLngLat(point as LngLatLike);
+        // **NEW LOGIC**: Redraw the remaining part of the route on each frame
+        drawRoute(routeId, route.slice(index), routeOptions?.color, routeOptions?.dash);
+      }
+
+      if (progress < 1) {
+        animationFrame.current = requestAnimationFrame(animate);
+      } else {
+        onFinish && onFinish();
+      }
+    };
+    animationFrame.current = requestAnimationFrame(animate);
+  }, [drawRoute]);
+
+  const startDriverEnRoute = useCallback(async () => {
+    setState("driverEnRoute");
+    const driverStart: [number, number] = [
+      pickup.coordinates[0] + (Math.random() - 0.5) * 0.05,
+      pickup.coordinates[1] + (Math.random() - 0.5) * 0.05,
+    ];
+
+    const el = document.createElement("div");
+    el.style.backgroundImage = `url('${carMarkerSVG}')`;
+    el.style.width = "36px";
+    el.style.height = "36px";
+    if (map.current) {
+        carMarker.current = new mapboxgl.Marker(el).setLngLat(driverStart).addTo(map.current);
+    }
+
+    const route = await fetchRoute(driverStart, pickup.coordinates);
+    animateCar("driver-route", route, 20, () => setState("arrived"), { color: "#1F2937", dash: [2, 2] });
+  }, [pickup.coordinates, animateCar]);
+
+  const startRide = useCallback(async () => {
+    setState("inRide");
+    const route = await fetchRoute(pickup.coordinates, destination.coordinates);
+    animateCar("travel-route", route, 25, () => setState("completed"), { color: "#2563EB" });
+  }, [pickup.coordinates, destination.coordinates, animateCar]);
+
+
   useEffect(() => {
     const token = process.env.NEXT_PUBLIC_MAPBOX_TOKEN;
     if (!token) {
@@ -51,21 +162,42 @@ export default function RideBookingMap({ payload, onClose }: Props) {
     map.current.addControl(new mapboxgl.NavigationControl(), "top-right");
 
     map.current.on("load", () => {
-      // Add pickup & destination markers
       new mapboxgl.Marker({ color: "#059669" })
         .setLngLat(pickup.coordinates)
         .addTo(map.current!);
       new mapboxgl.Marker({ color: "#DC2626" })
         .setLngLat(destination.coordinates)
         .addTo(map.current!);
+
+      const userEl = document.createElement("div");
+      userEl.className = "user-location-marker";
+      userMarker.current = new mapboxgl.Marker(userEl);
+
+      if (navigator.geolocation) {
+        watchId.current = navigator.geolocation.watchPosition(
+          (position) => {
+            const userLngLat: LngLatLike = [position.coords.longitude, position.coords.latitude];
+            if (userMarker.current && map.current) {
+              userMarker.current.setLngLat(userLngLat);
+              if (!userMarker.current.getElement().parentNode) {
+                userMarker.current.addTo(map.current);
+              }
+            }
+          },
+          (error) => console.error("Geolocation error:", error),
+          { enableHighAccuracy: true }
+        );
+      }
     });
 
     return () => {
+      if (watchId.current) {
+        navigator.geolocation.clearWatch(watchId.current);
+      }
       map.current?.remove();
     };
   }, [pickup, destination]);
 
-  // === SIMULATE DRIVER FOUND ===
   useEffect(() => {
     if (state === "searching") {
       const timer = setTimeout(() => {
@@ -73,119 +205,48 @@ export default function RideBookingMap({ payload, onClose }: Props) {
       }, 3000);
       return () => clearTimeout(timer);
     }
-  }, [state]);
+  }, [state, startDriverEnRoute]);
 
-  const fetchRoute = async (start: [number, number], end: [number, number]) => {
-    const token = process.env.NEXT_PUBLIC_MAPBOX_TOKEN;
-    const url = `https://api.mapbox.com/directions/v5/mapbox/driving/${start.join(
-      ","
-    )};${end.join(",")}?geometries=geojson&access_token=${token}`;
-    const res = await fetch(url);
-    const data = await res.json();
-    return data.routes[0].geometry.coordinates as [number, number][];
-  };
-
-  // === START DRIVER COMING ===
-  const startDriverEnRoute = async () => {
-    setState("driverEnRoute");
-    const driverStart: [number, number] = [
-      pickup.coordinates[0] + (Math.random() - 0.5) * 0.05,
-      pickup.coordinates[1] + (Math.random() - 0.5) * 0.05,
-    ];
-
-    // Add car marker
-    const el = document.createElement("div");
-    el.style.backgroundImage = `url('${carMarkerSVG}')`;
-    el.style.width = "36px";
-    el.style.height = "36px";
-    carMarker.current = new mapboxgl.Marker(el).setLngLat(driverStart).addTo(map.current!);
-
-    // Fetch route & draw dashed line
-    const route = await fetchRoute(driverStart, pickup.coordinates);
-    drawRoute("driver-route", route, "#1F2937", [2, 2]);
-
-    animateCar(route, 20, () => setState("arrived"));
-  };
-
-  // === DRAW ROUTE ON MAP ===
-  const drawRoute = (
-    id: string,
-    coords: [number, number][],
-    color = "#3B82F6",
-    dash: number[] = []
-  ) => {
-    if (!map.current) return;
-    if (map.current.getLayer(id)) {
-      map.current.removeLayer(id);
-      map.current.removeSource(id);
-    }
-    map.current.addSource(id, {
-      type: "geojson",
-      data: {
-        type: "Feature",
-        properties: {},
-        geometry: { type: "LineString", coordinates: coords },
-      },
-    });
-    map.current.addLayer({
-      id,
-      type: "line",
-      source: id,
-      layout: { "line-cap": "round", "line-join": "round" },
-      paint: {
-        "line-color": color,
-        "line-width": 4,
-        "line-dasharray": dash.length ? dash : undefined,
-      },
-    });
-  };
-
-  // === ANIMATION ===
-  const animateCar = (
-    route: [number, number][],
-    durationSeconds: number,
-    onFinish?: () => void
-  ) => {
-    if (!carMarker.current) return;
-    const startTime = performance.now();
-    const duration = durationSeconds * 1000;
-
-    const animate = (now: number) => {
-      const progress = Math.min((now - startTime) / duration, 1);
-      const index = Math.floor(progress * (route.length - 1));
-      const point = route[index];
-      if (point) carMarker.current!.setLngLat(point as LngLatLike);
-
-      if (progress < 1) {
-        animationFrame.current = requestAnimationFrame(animate);
-      } else {
-        onFinish && onFinish();
-      }
-    };
-    animationFrame.current = requestAnimationFrame(animate);
-  };
-
-  // === START TRAVEL WHEN BOTH READY ===
   useEffect(() => {
     if (state === "arrived" && clientReady && driverReady) {
       startRide();
     }
-  }, [clientReady, driverReady, state]);
-
-  const startRide = async () => {
-    setState("inRide");
-    const route = await fetchRoute(pickup.coordinates, destination.coordinates);
-    drawRoute("travel-route", route, "#2563EB", []);
-    animateCar(route, 25, () => setState("completed"));
-  };
+  }, [clientReady, driverReady, state, startRide]);
 
   const handleClose = () => {
-    cancelAnimationFrame(animationFrame.current!);
+    if (animationFrame.current) {
+        cancelAnimationFrame(animationFrame.current);
+    }
     onClose();
   };
 
   return (
     <div className="fixed inset-0 z-50 bg-black/50 flex items-center justify-center">
+       <style>{`
+        .user-location-marker {
+          width: 18px;
+          height: 18px;
+          border-radius: 50%;
+          background-color: #3B82F6;
+          border: 2px solid white;
+          box-shadow: 0 0 0 2px #3B82F6;
+          animation: pulse 2s infinite;
+        }
+        @keyframes pulse {
+          0% {
+            transform: scale(0.95);
+            box-shadow: 0 0 0 0 rgba(59, 130, 246, 0.7);
+          }
+          70% {
+            transform: scale(1);
+            box-shadow: 0 0 0 10px rgba(59, 130, 246, 0);
+          }
+          100% {
+            transform: scale(0.95);
+            box-shadow: 0 0 0 0 rgba(59, 130, 246, 0);
+          }
+        }
+      `}</style>
       <div className="relative w-full h-full">
         <div ref={mapContainer} className="absolute inset-0 w-full h-full pointer-events-auto" />
 

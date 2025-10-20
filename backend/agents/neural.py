@@ -5,7 +5,7 @@ import json
 import httpx
 from fastapi import APIRouter, HTTPException
 from openai import OpenAI
-from schemas.agent import AgentRequest, ItineraryDraft, ToolCallResponse
+from schemas.agent import AgentRequest, ItineraryDraft, ToolCallResponse, LocationRequestResponse
 from typing import Union
 
 # --- Setup ---
@@ -27,7 +27,7 @@ tools = [
                 "properties": {
                     "pickup_location": {
                         "type": "string",
-                        "description": "The starting point of the journey, e.g., 'Zurich Airport'."
+                        "description": "The starting point of the journey, e.g., 'Zurich Airport' or 'my current position'."
                     },
                     "destination_location": {
                         "type": "string",
@@ -45,22 +45,12 @@ available_tools = {
 }
 
 # --- Neural Agent Endpoint ---
-@router.post("/", response_model=Union[ItineraryDraft, ToolCallResponse])
+@router.post("/", response_model=Union[ItineraryDraft, ToolCallResponse, LocationRequestResponse])
 async def run_neural_agent(request: AgentRequest):
     """
-    Generates or modifies an itinerary, or triggers a tool call for actions like booking a ride.
+    Generates an itinerary, triggers a tool call, or requests location data.
     """
-    # --- Logic to handle flexible input from either prompt or messages ---
-    if request.prompt:
-        prompt_text = request.prompt
-    elif request.messages:
-        # Combine messages into a single prompt string, taking the last user message as primary
-        prompt_text = next((msg.content for msg in reversed(request.messages) if msg.sender == 'user'), None)
-        if not prompt_text:
-             raise HTTPException(status_code=422, detail="No user message found in 'messages'.")
-    else:
-        raise HTTPException(status_code=422, detail="Either 'prompt' or 'messages' must be provided.")
-    
+    prompt_text = request.prompt or ""
     logger.info(f"Neural Agent received prompt: {prompt_text}")
     try:
         system_prompt = """
@@ -69,77 +59,67 @@ async def run_neural_agent(request: AgentRequest):
         - If the user asks to book a ride, book a taxi, or a similar transportation request, use the 'book_ride' tool.
         - For all other requests related to planning, sightseeing, or modifying trips, generate or update an itinerary.
         - When creating an itinerary, always return the response as a JSON object with a single key "itinerary_draft".
-          "itinerary_draft" must be an array of day objects.
-          Each day object MUST have "day", "title", and "activities".
-          Each activity MUST have "time", "description", "reason", and a "price" (integer, in CHF).
         """
 
         response = client.chat.completions.create(
             model="gpt-4o-mini",
-            messages=[
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": prompt_text}
-            ],
+            messages=[{"role": "system", "content": system_prompt}, {"role": "user", "content": prompt_text}],
             tools=tools,
             tool_choice="auto"
         )
-        
+
         response_message = response.choices[0].message
         tool_calls = response_message.tool_calls
 
         if tool_calls:
-            logger.info(f"Neural Agent initiated tool call: {tool_calls[0].function.name}")
             tool_call = tool_calls[0]
-            tool_name = tool_call.function.name
-
-            if available_tools.get(tool_name) == "book_ride":
+            if tool_call.function.name == "book_ride":
                 args = json.loads(tool_call.function.arguments)
-                pickup_name = args.get("pickup_location")
-                destination_name = args.get("destination_location")
+                pickup_name = args.get("pickup_location", "").lower()
+                
+                is_current_location_request = any(term in pickup_name for term in ["current position", "here", "my location", "current postions"])
+
+                if is_current_location_request and not request.current_location:
+                    # Backend is now requesting the location from the frontend
+                    return LocationRequestResponse()
+
+                # Proceed if we have coordinates or a named location
+                pickup_coords = request.current_location if is_current_location_request else None
+                final_pickup_name = "Current Location" if is_current_location_request else pickup_name
 
                 async with httpx.AsyncClient() as http_client:
-                    # Use the location agent to get coordinates
-                    pickup_response = await http_client.get(f"http://127.0.0.1:8000/api/agents/location/search?place_name={pickup_name}")
-                    destination_response = await http_client.get(f"http://127.0.0.1:8000/api/agents/location/search?place_name={destination_name}")
+                    if not pickup_coords:
+                        pickup_res = await http_client.get(f"http://127.0.0.1:8000/api/agents/location/search?place_name={final_pickup_name}")
+                        pickup_res.raise_for_status()
+                        pickup_coords = pickup_res.json()["coordinates"]
                     
-                    pickup_response.raise_for_status()
-                    destination_response.raise_for_status()
-                    
-                    pickup_coords = pickup_response.json()["coordinates"]
-                    destination_coords = destination_response.json()["coordinates"]
-                
-                tool_response = ToolCallResponse(
+                    dest_res = await http_client.get(f"http://127.0.0.1:8000/api/agents/location/search?place_name={args.get('destination_location')}")
+                    dest_res.raise_for_status()
+                    dest_coords = dest_res.json()["coordinates"]
+
+                return ToolCallResponse(
                     tool_name="book_ride",
                     tool_params={
-                        "pickup": {"name": pickup_name, "coordinates": pickup_coords},
-                        "destination": {"name": destination_name, "coordinates": destination_coords}
+                        "pickup": {"name": final_pickup_name.title(), "coordinates": pickup_coords},
+                        "destination": {"name": args.get("destination_location"), "coordinates": dest_coords}
                     }
                 )
-                return tool_response
 
-        # Default behavior: Generate or modify an itinerary
-        # Fallback to generating a standard text/itinerary response if no tool is called
-        completion_without_tools = client.chat.completions.create(
+        # Fallback to generating an itinerary
+        completion = client.chat.completions.create(
              model="gpt-4o-mini",
              response_format={"type": "json_object"},
              messages=[
-                {"role": "system", "content": system_prompt},
+                {"role": "system", "content": system_prompt + '\nEnsure each activity has "time", "description", "reason", and "price".'},
                 {"role": "user", "content": prompt_text}
             ]
         )
-        response_content = completion_without_tools.choices[0].message.content
-
-        if not response_content:
-            raise HTTPException(status_code=500, detail="AI model returned an empty response.")
-
-        logger.info(f"Neural Agent received OpenAI response: {response_content}")
-        itinerary_data = json.loads(response_content)
-        return ItineraryDraft(**itinerary_data)
+        response_content = completion.choices[0].message.content
+        return ItineraryDraft(**json.loads(response_content or '{}'))
 
     except httpx.HTTPStatusError as e:
-        logger.error(f"Error calling location agent: {e.response.text}")
-        raise HTTPException(status_code=500, detail=f"Failed to find location: {e.request.url}")
+        place_name = e.request.url.params.get("place_name", "the location")
+        raise HTTPException(status_code=404, detail=f"Sorry, I couldn't find a location for '{place_name}'.")
     except Exception as e:
         logger.error(f"Error in Neural Agent: {e}")
-        raise HTTPException(status_code=500, detail="Error processing your request.")
-
+        raise HTTPException(status_code=500, detail="An error occurred while processing your request.")

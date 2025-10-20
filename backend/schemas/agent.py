@@ -1,6 +1,6 @@
 # File: backend/schemas/agent.py
 from pydantic import BaseModel, Field
-from typing import List, Optional, Union
+from typing import List, Optional, Union, Tuple
 
 # --- Main Itinerary Schemas ---
 
@@ -18,7 +18,7 @@ class ItineraryDay(BaseModel):
 class ItineraryDraft(BaseModel):
     itinerary: List[ItineraryDay] = Field(..., alias="itinerary_draft")
 
-# --- New Models for Tool Calling ---
+# --- New Models for Tool Calling & Location Request ---
 class Location(BaseModel):
     name: str
     coordinates: List[float]
@@ -30,6 +30,10 @@ class RideBookingPayload(BaseModel):
 class ToolCallResponse(BaseModel):
     tool_name: str
     tool_params: RideBookingPayload
+
+class LocationRequestResponse(BaseModel):
+    action_required: str = "get_location"
+    message: str = "I need your current location to proceed. Please grant location access."
 
 # --- Conversational Schemas ---
 
@@ -45,6 +49,7 @@ class ConversationalRequest(BaseModel):
 class AgentRequest(BaseModel):
     prompt: Optional[str] = None
     messages: Optional[List[Message]] = None
+    current_location: Optional[Tuple[float, float]] = None # [longitude, latitude]
 
 class AgentResponse(BaseModel):
     content: str = Field(..., alias="response")
@@ -53,4 +58,3 @@ class AgentResponse(BaseModel):
 class MoodResponse(BaseModel):
     mood: str
     color: str = Field(..., alias="color_suggestion")
-
