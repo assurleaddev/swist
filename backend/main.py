@@ -20,10 +20,10 @@ from mcp import context
 from payments import stripe_handler, paypal_handler
 from auth import routes as auth_routes, models as auth_models
 from users import routes as user_routes
+from chat import routes as chat_routes # Import the new chat routes
 from auth.database import engine
 
 # --- Static Files Setup ---
-# Create directory relative to the backend folder
 os.makedirs("static/profile_pictures", exist_ok=True)
 
 
@@ -55,6 +55,7 @@ app.add_middleware(
 # --- API Routers ---
 app.include_router(auth_routes.router, prefix="/api/auth", tags=["Authentication"])
 app.include_router(user_routes.router, prefix="/api/users", tags=["Users"])
+app.include_router(chat_routes.router, prefix="/api/chat", tags=["Chat"]) # Add the chat router
 app.include_router(neural.router, prefix="/api/agents/neural", tags=["Agents"])
 app.include_router(emotional.router, prefix="/api/agents/emotional", tags=["Agents"])
 app.include_router(radar.router, prefix="/api/agents/radar", tags=["Agents"])
@@ -68,4 +69,3 @@ app.include_router(paypal_handler.router, prefix="/api/payments", tags=["Payment
 @app.get("/")
 def read_root():
     return {"status": "SwissTouristy AI Backend is running"}
-

@@ -1,34 +1,39 @@
 // File: frontend/app/page.tsx
 "use client";
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import axios from 'axios';
+import { useAuth, api } from '@/context/AuthContext';
 import NeuralPromptBar from '@/components/NeuralPromptBar';
 import ChatMessage from '@/components/ChatMessage';
 import Sidebar from '@/components/Sidebar';
-import ServiceCard from '@/components/ServiceCard';
-import Footer from '@/components/Footer';
-import CustomizeModal from '@/components/CustomizeModal';
-import VehicleBooking from '@/components/VehicleBooking';
+import RideBookingMap from '@/components/RideBookingMap';
+import { ItineraryDay, SavedTrip, CustomizationFeedback, Message, PromptDetails, RideBookingPayload, RideSummary, RideState } from '@/lib/types';
+import { Avatar, AvatarFallback } from '@/components/ui/avatar';
 import Header from '@/components/Header';
+import Footer from '@/components/Footer';
 import HeroSection from '@/components/HeroSection';
 import FeaturedJourney from '@/components/FeaturedJourney';
 import TailoredExperiences from '@/components/TailoredExperiences';
-import RideBookingMap from '@/components/RideBookingMap';
-import { ItineraryDay, SavedTrip, CustomizationFeedback, Message, PromptDetails, RideBookingPayload } from '@/lib/types';
+import VehicleBooking from '@/components/VehicleBooking';
+import CustomizeModal from '@/components/CustomizeModal';
+import ServiceCard from '@/components/ServiceCard';
 import { Utensils, Zap, Hotel, Calendar } from 'lucide-react';
-import { Avatar, AvatarFallback } from '@/components/ui/avatar';
 
 type ConversationStage =
   | 'AWAITING_INITIAL_PROMPT' | 'AWAITING_TRAVELERS' | 'AWAITING_DATE'
   | 'AWAITING_FLIGHTS' | 'GENERATING_ITINERARY' | 'AWAITING_IMPROVEMENTS' | 'PLAN_CONFIRMED';
 
 export default function Home() {
+  const { user, isLoading: authIsLoading } = useAuth();
   const [messages, setMessages] = useState<Message[]>([]);
+  const [chatSessions, setChatSessions] = useState<{id: number, title: string}[]>([]);
+  const [activeSessionId, setActiveSessionId] = useState<number | null>(null);
+  const [isLoading, setIsLoading] = useState(false);
+  const [isRideBookingModalOpen, setIsRideBookingModalOpen] = useState(false);
+  const [activeRideMessageId, setActiveRideMessageId] = useState<number | null>(null);
   const [savedTrips, setSavedTrips] = useState<SavedTrip[]>([]);
   const [showSavedPopup, setShowSavedPopup] = useState(false);
-  const [isLoading, setIsLoading] = useState(false);
-  const [sessionId, setSessionId] = useState('');
   const [conversationStage, setConversationStage] = useState<ConversationStage>('AWAITING_INITIAL_PROMPT');
   const [promptDetails, setPromptDetails] = useState<Partial<PromptDetails>>({});
   const [isPlanFinalized, setIsPlanFinalized] = useState(false);
@@ -36,65 +41,99 @@ export default function Home() {
   const [currentItineraryToCustomize, setCurrentItineraryToCustomize] = useState<ItineraryDay[]>([]);
   const [isReadOnlyModal, setIsReadOnlyModal] = useState(false);
   const [currentFeedbackToView, setCurrentFeedbackToView] = useState<CustomizationFeedback | null>(null);
+  
+  const startNewSession = useCallback(() => {
+    setActiveSessionId(null);
+    setMessages([{ id: Date.now(), sender: 'ai', content: 'Welcome! Log in or register to save your chat history and create multiple travel plans.' }]);
+  }, []);
+  
+  const handleNewChat = useCallback(async () => {
+    if (!user) {
+        startNewSession();
+        return;
+    }
+    try {
+        const response = await api.post('/chat/sessions', { title: "New Chat" });
+        const newSession = response.data;
+        setChatSessions(prev => [newSession, ...prev]);
+        setActiveSessionId(newSession.id);
+        setMessages([{ id: Date.now(), sender: 'ai', content: 'How can I assist you with your new trip?' }]);
+    } catch (error) {
+        console.error("Failed to create new chat session:", error);
+    }
+  }, [user, startNewSession]);
 
-  // State for the ride booking modal
-  const [isRideBookingModalOpen, setIsRideBookingModalOpen] = useState(false);
-  const [rideBookingPayload, setRideBookingPayload] = useState<RideBookingPayload | null>(null);
+  const handleSelectChat = useCallback(async (sessionId: number) => {
+    if (sessionId === activeSessionId) return;
+    setActiveSessionId(sessionId);
+    setIsLoading(true);
+    try {
+        const response = await api.get(`/chat/sessions/${sessionId}`);
+        setMessages(response.data.length > 0 ? response.data : [{ id: Date.now(), sender: 'ai', content: 'This is a new chat. How can I help?' }]);
+    } catch (error) {
+        console.error("Failed to fetch messages for session:", sessionId, error);
+    } finally {
+        setIsLoading(false);
+    }
+  }, [activeSessionId]);
+
+  const fetchChatSessions = useCallback(async () => {
+    if (!user) return;
+    try {
+        const response = await api.get('/chat/sessions');
+        setChatSessions(response.data);
+        if (response.data.length > 0 && !activeSessionId) {
+            handleSelectChat(response.data[0].id);
+        } else if (response.data.length === 0) {
+            handleNewChat();
+        }
+    } catch (error) {
+        console.error("Failed to fetch chat sessions:", error);
+    }
+  }, [user, activeSessionId, handleSelectChat, handleNewChat]);
 
   useEffect(() => {
-    startNewSession();
-  }, []);
-
-  const startNewSession = () => {
-    setSessionId(crypto.randomUUID());
-    setMessages([{ id: Date.now(), sender: 'ai', content: 'Welcome to your personal Swiss Concierge. How can I assist you with your travel plans today?' }]);
-    setConversationStage('AWAITING_INITIAL_PROMPT');
-    setPromptDetails({});
-    setIsPlanFinalized(false);
-  };
+    if (!authIsLoading) {
+        if (user) {
+            fetchChatSessions();
+        } else {
+            setChatSessions([]);
+            startNewSession();
+        }
+    }
+  }, [user, authIsLoading, fetchChatSessions, startNewSession]);
 
   const handleNewMessage = (newMessage: Message) => {
     setMessages(prev => [...prev, newMessage]);
   };
 
-  useEffect(() => {
-    const stageActions: Record<ConversationStage, () => void> = {
-        AWAITING_TRAVELERS: () => handleNewMessage({ id: Date.now(), sender: 'ai', content: 'That sounds wonderful! To help me plan the perfect trip, could you tell me how many people will be traveling?' }),
-        AWAITING_DATE: () => handleNewMessage({ id: Date.now(), sender: 'ai', content: 'Great! And what are your preferred travel dates?' }),
-        AWAITING_FLIGHTS: () => handleNewMessage({ id: Date.now(), sender: 'ai', content: 'Perfect. Have you already booked your flights? (Yes/No)' }),
-        PLAN_CONFIRMED: () => {
-            const lastItinerary = [...messages].reverse().find(m => m.itinerary)?.itinerary;
-            if (lastItinerary) {
-                handleNewMessage({ id: Date.now(), sender: 'ai', content: "Excellent! I'm glad you're happy with the plan. Here is the final summary. You can proceed with the booking.", bookingSummaryItinerary: lastItinerary });
-                setIsPlanFinalized(true);
-            }
-        },
-        AWAITING_INITIAL_PROMPT: () => {},
-        GENERATING_ITINERARY: () => {},
-        AWAITING_IMPROVEMENTS: () => {}
-    };
-    stageActions[conversationStage]?.();
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [conversationStage]);
-
   const handleNewPrompt = async (prompt: string) => {
     handleNewMessage({ id: Date.now(), sender: 'user', content: prompt });
-    // Centralize all logic into generateItinerary
-    await generateItinerary({ mainQuery: prompt });
+
+    if (!user) {
+        handleNewMessage({ id: Date.now() + 1, sender: 'ai', content: '', authPrompt: true });
+        return;
+    }
+
+    if (!activeSessionId) {
+        handleNewMessage({id: Date.now() + 1, sender: 'ai', content: "Please select or create a new chat session first."});
+        return;
+    }
+    
+    await generateItinerary({ mainQuery: prompt, sessionId: activeSessionId });
   };
-
-  const generateItinerary = async (details: Partial<PromptDetails & { currentLocation?: { latitude: number, longitude: number } }>, previousItinerary?: ItineraryDay[] | null, feedback?: string) => {
+  
+  const generateItinerary = async (details: Partial<PromptDetails & { sessionId: number, currentLocation?: { latitude: number, longitude: number } }>, previousItinerary?: ItineraryDay[] | null, feedback?: string) => {
     setIsLoading(true);
-
-    const fullPrompt = feedback || details.mainQuery || '';
+    let fullPrompt = feedback || details.mainQuery || '';
     
     try {
-      const payload: any = { prompt: fullPrompt };
+      const payload: any = { prompt: fullPrompt, session_id: details.sessionId };
       if (details.currentLocation) {
           payload.current_location = [details.currentLocation.longitude, details.currentLocation.latitude];
       }
       
-      const neuralResponse = await axios.post('http://127.0.0.1:8000/api/agents/neural', payload);
+      const neuralResponse = await api.post('/agents/neural', payload);
       const { data } = neuralResponse;
 
       if (data.action_required === 'get_location') {
@@ -103,7 +142,6 @@ export default function Home() {
             navigator.geolocation.getCurrentPosition(
                 (position) => {
                     const { latitude, longitude } = position.coords;
-                    // Resend the request with location data
                     generateItinerary({ ...details, currentLocation: { latitude, longitude } });
                 },
                 (error) => {
@@ -122,14 +160,19 @@ export default function Home() {
             setIsLoading(false);
         }
       } else if (data.tool_name === 'book_ride') {
-          setRideBookingPayload(data.tool_params);
+          const messageId = Date.now() + 2;
+          handleNewMessage({ 
+            id: messageId, 
+            sender: 'ai', 
+            content: "Of course, I can book that ride for you. Please confirm the details on the map.",
+            rideDetails: { ...data.tool_params, state: 'searching' } 
+          });
+          setActiveRideMessageId(messageId);
           setIsRideBookingModalOpen(true);
-          handleNewMessage({ id: Date.now() + 2, sender: 'ai', content: "Of course, I can book that ride for you. Please confirm the details on the map." });
           setIsLoading(false);
       } else if (data.itinerary_draft) {
         handleNewMessage({ id: Date.now() + 2, sender: 'ai', content: "", itinerary: data.itinerary_draft });
         handleNewMessage({ id: Date.now() + 3, sender: 'ai', content: "How does this look? Are there any further adjustments you'd like, or shall we finalize this plan?" });
-        setConversationStage('AWAITING_IMPROVEMENTS');
         setIsLoading(false);
       } else {
           throw new Error("Invalid response from server.");
@@ -141,7 +184,6 @@ export default function Home() {
             errorMessage = error.response.data.detail;
         }
         handleNewMessage({ id: Date.now() + 1, sender: 'ai', content: errorMessage });
-        setConversationStage('AWAITING_INITIAL_PROMPT');
         setIsLoading(false);
     }
   };
@@ -168,10 +210,38 @@ export default function Home() {
     handleNewMessage({ id: Date.now(), sender: 'user', content: `I've requested some changes to the previous itinerary.`, customizationRequest: feedback });
     const lastItinerary = [...messages].reverse().find(m => m.itinerary)?.itinerary;
     if(lastItinerary) {
-        setConversationStage('GENERATING_ITINERARY');
         generateItinerary(promptDetails as PromptDetails, lastItinerary, feedbackPrompt);
     }
   };
+
+  const handleExpandRide = (messageId: number) => {
+    setActiveRideMessageId(messageId);
+    setIsRideBookingModalOpen(true);
+  };
+
+  const handleRideStateChange = (newState: RideState) => {
+    setMessages(prevMessages =>
+      prevMessages.map(msg =>
+        msg.id === activeRideMessageId && msg.rideDetails
+          ? { ...msg, rideDetails: { ...msg.rideDetails, state: newState } }
+          : msg
+      )
+    );
+  };
+
+  const handleRideComplete = (summary: RideSummary) => {
+    setMessages(prevMessages => 
+        prevMessages.map(msg => 
+            msg.id === activeRideMessageId && msg.rideDetails
+            ? { ...msg, rideDetails: { ...msg.rideDetails, summary: summary, state: 'completed' } }
+            : msg
+        )
+    );
+    setIsRideBookingModalOpen(false);
+    setActiveRideMessageId(null);
+  };
+  
+  const activeRideDetails = messages.find(m => m.id === activeRideMessageId)?.rideDetails;
 
   return (
     <div className="flex flex-col min-h-screen bg-gray-50 font-sans text-gray-800">
@@ -179,8 +249,9 @@ export default function Home() {
         
         <Header />
         <main>
-            <HeroSection onStartChat={handleNewPrompt} />
+          <HeroSection onStartChat={handleNewPrompt} />
         </main>
+        
         <div className="p-8 space-y-8">
             <TailoredExperiences />
             <VehicleBooking />
@@ -188,17 +259,35 @@ export default function Home() {
         </div>
 
         <div className="flex-grow w-full max-w-screen-2xl mx-auto grid grid-cols-12 gap-8 px-8 pt-0">
-            <main className="col-span-12 lg:col-span-8 xl:col-span-9 flex flex-col bg-white rounded-lg border border-gray-200 shadow-sm h-[80vh]">
+            <aside className="col-span-12 lg:col-span-3">
+                <Sidebar 
+                    savedTrips={savedTrips} 
+                    chatSessions={chatSessions}
+                    onNewChat={handleNewChat}
+                    onSelectChat={handleSelectChat}
+                    activeSessionId={activeSessionId}
+                /> 
+            </aside>
+            <main className="col-span-12 lg:col-span-9 flex flex-col bg-white rounded-lg border border-gray-200 shadow-sm h-[calc(100vh-8rem)]">
                 <div className="flex-grow p-6 space-y-6 overflow-y-auto">
-                    {messages.map((msg) => ( <ChatMessage key={msg.id} message={msg} onSaveTrip={handleSaveTrip} onCustomize={handleOpenCustomizeModal} onViewCustomization={handleViewCustomization} /> ))}
+                    {messages.map((msg) => ( 
+                        <ChatMessage 
+                            key={msg.id} 
+                            message={msg} 
+                            onSaveTrip={handleSaveTrip} 
+                            onCustomize={handleOpenCustomizeModal} 
+                            onViewCustomization={handleViewCustomization}
+                            onExpandRide={handleExpandRide} 
+                        /> 
+                    ))}
                     {isLoading && ( <div className="flex items-start gap-4"> <Avatar className="h-8 w-8"> <AvatarFallback className="bg-gray-700 text-white text-xs">AI</AvatarFallback> </Avatar> <div className="max-w-xl rounded-lg px-4 py-3 text-sm rounded-bl-none bg-gray-100 text-gray-800"> <div className="flex items-center justify-center space-x-1 h-5"> <span className="h-2 w-2 bg-gray-500 rounded-full animate-bounce [animation-delay:-0.3s]"></span> <span className="h-2 w-2 bg-gray-500 rounded-full animate-bounce [animation-delay:-0.15s]"></span> <span className="h-2 w-2 bg-gray-500 rounded-full animate-bounce"></span> </div> </div> </div> )}
                 </div>
                 <div className="p-4 border-t border-gray-200">
-                    <NeuralPromptBar onNewPrompt={handleNewPrompt} onNewTrip={startNewSession} isLoading={isLoading} />
+                    <NeuralPromptBar onNewPrompt={handleNewPrompt} onNewTrip={handleNewChat} isLoading={isLoading} />
                 </div>
             </main>
-            <aside className="col-span-12 lg:col-span-4 xl:col-span-3"> <Sidebar savedTrips={savedTrips} /> </aside>
         </div>
+        
         <section className="w-full max-w-screen-2xl mx-auto px-8 pb-8">
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6">
                 <ServiceCard icon={<Utensils className="h-6 w-6" />} title="Fine Dining" description="Michelin-starred reservations" />
@@ -207,16 +296,17 @@ export default function Home() {
                 <ServiceCard icon={<Calendar className="h-6 w-6" />} title="Exclusive Events" description="Private experiences & VIP access" />
             </div>
         </section>
+        
         <Footer />
-        <CustomizeModal isOpen={isCustomizeModalOpen} onClose={() => setIsCustomizeModalOpen(false)} itinerary={currentItineraryToCustomize} onSave={handleSaveCustomization} readOnlyFeedback={currentFeedbackToView} />
+        <CustomizeModal isOpen={isCustomizeModalOpen} onClose={() => setIsCustomizeModalOpen(false)} itinerary={currentItineraryToCustomize} onSave={() => {}} readOnlyFeedback={currentFeedbackToView} />
   
-        {isRideBookingModalOpen && rideBookingPayload && (
+        {isRideBookingModalOpen && activeRideDetails && (
           <RideBookingMap
-            payload={{
-              pickup: { ...rideBookingPayload.pickup, label: "Pickup" },
-              destination: { ...rideBookingPayload.destination, label: "Destination" },
-            }}
+            payload={activeRideDetails}
+            initialState={activeRideDetails.state}
             onClose={() => setIsRideBookingModalOpen(false)}
+            onStateChange={handleRideStateChange}
+            onComplete={handleRideComplete}
           />
         )}
     </div>

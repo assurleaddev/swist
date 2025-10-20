@@ -6,16 +6,50 @@ import { Message, ItineraryDay, CustomizationFeedback } from "@/lib/types";
 import PredictiveItinerary from "./PredictiveItinerary";
 import { Button } from "./ui/button";
 import BookingSummaryCard from "./BookingSummaryCard";
+import RideBookingCard from "./RideBookingCard";
+import AuthPromptCard from "./AuthPromptCard"; // Import the new card
 
 interface ChatMessageProps {
   message: Message;
   onSaveTrip: (itineraryToSave: ItineraryDay[]) => void;
   onCustomize: (itinerary: ItineraryDay[]) => void;
   onViewCustomization: (feedback: CustomizationFeedback) => void;
+  onExpandRide: (messageId: number) => void;
 }
 
-export default function ChatMessage({ message, onSaveTrip, onCustomize, onViewCustomization }: ChatMessageProps) {
+export default function ChatMessage({ message, onSaveTrip, onCustomize, onViewCustomization, onExpandRide }: ChatMessageProps) {
   const isUser = message.sender === 'user';
+
+  // Render the Auth Prompt Card
+  if (message.authPrompt) {
+      return (
+        <div className="flex items-start gap-4">
+            <Avatar className="h-8 w-8 flex-shrink-0">
+                <AvatarFallback className="bg-gray-700 text-white text-xs">AI</AvatarFallback>
+            </Avatar>
+            <AuthPromptCard />
+        </div>
+      )
+  }
+
+  // Render the Ride Booking Card
+  if (message.sender === 'ai' && message.rideDetails) {
+    return (
+        <div className="flex items-start gap-4">
+            <Avatar className="h-8 w-8 flex-shrink-0">
+                <AvatarFallback className="bg-gray-700 text-white text-xs">AI</AvatarFallback>
+            </Avatar>
+            <div className="w-full max-w-md">
+                <p className="max-w-xl rounded-lg px-4 py-3 text-sm rounded-bl-none bg-gray-100 text-gray-800 mb-2">{message.content}</p>
+                <RideBookingCard
+                    payload={message.rideDetails}
+                    summary={message.rideDetails.summary}
+                    onExpand={() => onExpandRide(message.id)}
+                />
+            </div>
+        </div>
+    );
+  }
 
   // Render the Booking Summary Card with the final itinerary
   if (message.sender === 'ai' && message.bookingSummaryItinerary) {
@@ -88,4 +122,3 @@ export default function ChatMessage({ message, onSaveTrip, onCustomize, onViewCu
     </div>
   );
 }
-

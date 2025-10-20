@@ -1,5 +1,7 @@
 // File: frontend/lib/types.ts
 
+export type RideState = "searching" | "driverEnRoute" | "arrived" | "inRide" | "completed";
+
 // The main interface for a chat message, used throughout the frontend
 export interface Message {
   id: number;
@@ -8,8 +10,11 @@ export interface Message {
   itinerary?: ItineraryDay[];
   customizationRequest?: CustomizationFeedback;
   bookingSummaryItinerary?: ItineraryDay[];
-  // New property to trigger the map modal
-  rideBookingPayload?: RideBookingPayload;
+  rideDetails?: RideBookingPayload & { 
+    state: RideState;
+    summary?: RideSummary;
+  };
+  authPrompt?: boolean; // New flag to trigger the authentication card
 }
 
 // Corresponds to the Activity model in the backend
@@ -69,3 +74,9 @@ export interface RideBookingPayload {
   destination: Location;
 }
 
+// New type for the ride summary
+export interface RideSummary {
+    duration: string; // e.g., "15 minutes"
+    route: [number, number][];
+    eta: string; // e.g., "7:30 PM"
+}

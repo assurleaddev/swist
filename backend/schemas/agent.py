@@ -50,6 +50,7 @@ class AgentRequest(BaseModel):
     prompt: Optional[str] = None
     messages: Optional[List[Message]] = None
     current_location: Optional[Tuple[float, float]] = None # [longitude, latitude]
+    session_id: Optional[int] = None # Add session_id
 
 class AgentResponse(BaseModel):
     content: str = Field(..., alias="response")
