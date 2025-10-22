@@ -1,8 +1,9 @@
 # File: backend/main.py
 import os
+import requests
 import sys
 from pathlib import Path
-from fastapi import FastAPI
+from fastapi import FastAPI ,HTTPException, Depends
 from starlette.middleware.cors import CORSMiddleware
 from dotenv import load_dotenv
 import logging
@@ -22,7 +23,7 @@ from auth import routes as auth_routes, models as auth_models
 from users import routes as user_routes
 from chat import routes as chat_routes # Import the new chat routes
 from auth.database import engine
-
+from pydantic import BaseModel
 # --- Static Files Setup ---
 os.makedirs("static/profile_pictures", exist_ok=True)
 
@@ -65,6 +66,42 @@ app.include_router(context.router, prefix="/api/mcp/context", tags=["MCP"])
 app.include_router(stripe_handler.router, prefix="/api/payments", tags=["Payments"])
 app.include_router(paypal_handler.router, prefix="/api/payments", tags=["Payments"])
 
+
+
+# --- NEW CODE FOR MCP-SERVER INTEGRATION ---
+
+# 1. Pydantic model to define the structure of the request from the frontend
+class McpToolRequest(BaseModel):
+    toolName: str
+    input: dict
+
+# 2. The URL where your mcp-server is running
+MCP_SERVER_URL = "http://localhost:8001/invoke"
+
+# 3. The new proxy endpoint
+@app.post("/mcp-tool")
+async def call_mcp_tool(request: McpToolRequest):
+    """
+    This endpoint acts as a proxy to the mapbox/mcp-server.
+    It receives a request from our frontend, forwards it to the mcp-server,
+    and returns the response.
+    """
+    try:
+        # Forward the request to the mcp-server
+        response = requests.post(
+            MCP_SERVER_URL,
+            json={"toolName": request.toolName, "input": request.input},
+            headers={"Content-Type": "application/json"}
+        )
+        # Raise an exception if the mcp-server returns an error
+        response.raise_for_status()
+        # Return the JSON response from the mcp-server
+        return response.json()
+    except requests.exceptions.RequestException as e:
+        # Handle network errors or other issues when calling the mcp-server
+        raise HTTPException(status_code=502, detail=f"Error calling MCP server: {e}")
+
+# --- END OF NEW CODE ---
 # --- Root Endpoint ---
 @app.get("/")
 def read_root():
